@@ -11,15 +11,16 @@
 ## Railway
 1. Репозиторій на GitHub (виписки `.xls/.xlsx` у `.gitignore` — не комітити).
 2. New project на https://railway.com → **окремий сервіс Postgres** у тому ж проєкті → Deploy з цього Dockerfile.
-   У змінних застосунку має бути `DATABASE_URL` від Postgres (Variable reference), не localhost.
-   Внутрішня адреса `*.railway.internal` — ок; публічний `*.rlwy.net` теж ок.
+   У `bank_ai_manager` → Variables **видали** `DATABASE_URL`, якщо там `localhost`.
+   Далі **Add Variable Reference** з сервісу Postgres: `DATABASE_PRIVATE_URL` (або `DATABASE_URL`).
+   Має бути хост `*.railway.internal` або `*.rlwy.net`, не localhost.
 3. Variables:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_USER_ID`
    - `MONOBANK_TOKEN`
    - `PUBLIC_URL` = `https://<твій-сервіс>.up.railway.app`
    - `OPENAI_API_KEY` (необов'язково)
-   Railway сам додає `DATABASE_URL`.
+   `DATABASE_URL` / `DATABASE_PRIVATE_URL` бери **reference з Postgres**, не з `.env.example`.
 4. Після деплою `/health` має відповісти `{"ok":true}`.
 5. Напиши боту `/start`, потім `/sync`. Історію Привату кинь файлом у чат.
    Локально історію з кореня: `python -m app.cli import-history`
