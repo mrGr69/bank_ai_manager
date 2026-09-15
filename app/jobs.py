@@ -11,7 +11,7 @@ from app.bot import get_bot
 from app.bot.handlers import notify_new
 from app.config import settings
 from app.db import SessionLocal
-from app.banks.monobank import sync_statements
+from app.banks.monobank import sync_busy, sync_statements
 from app.services.alerts import already_sent, mark_sent
 from app.services.reports import debt_chart_png, weekly_text
 from aiogram.types import BufferedInputFile
@@ -42,7 +42,7 @@ async def job_weekly():
 
 
 async def job_sync():
-    if not settings.monobank_token:
+    if not settings.monobank_token or sync_busy():
         return
     async with SessionLocal() as session:
         result = await sync_statements(session, days=2)

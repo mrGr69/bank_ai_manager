@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.config import parse_telegram_user_id, settings
 from app.db import SessionLocal
 from app.models import Setting, Transaction
-from app.banks.monobank import MonoError, sync_statements
+from app.banks.monobank import MonoError, sync_busy, sync_statements
 from app.services.files import import_path
 from app.services.alerts import mark_sent, should_alert_limit, already_sent
 from app.services.ledger import category_label, debt_snapshot, fmt_money, month_summary
@@ -247,6 +247,9 @@ async def cmd_limit(message: Message, command: CommandObject):
 
 @router.message(Command("sync"))
 async def cmd_sync(message: Message):
+    if sync_busy():
+        await message.answer("Уже тягну Monobank. Напишу, коли закінчу.")
+        return
     await message.answer("Тягну Monobank. Через ліміт банку це може зайняти ~2 хв…")
     try:
         async with SessionLocal() as session:

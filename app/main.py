@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.bot import get_bot
 from app.bot.handlers import dp, notify_new
+from app.bot.updates import remember_update, spawn
 from app.config import settings
 from app.db import SessionLocal, init_db
 from app.jobs import setup_jobs
@@ -76,12 +77,20 @@ async def telegram_webhook(request: Request):
         (msg.get("chat") or {}).get("id"),
         (msg.get("text") or "")[:80],
     )
-    try:
-        bot = get_bot()
-        update = Update.model_validate(payload, context={"bot": bot})
-        await dp.feed_update(bot, update)
-    except Exception:
-        log.exception("telegram webhook failed")
+    update_id = payload.get("update_id")
+    if not remember_update(update_id):
+        log.info("telegram duplicate update_id=%s ignored", update_id)
+        return {"ok": True}
+
+    async def _run():
+        try:
+            bot = get_bot()
+            update = Update.model_validate(payload, context={"bot": bot})
+            await dp.feed_update(bot, update)
+        except Exception:
+            log.exception("telegram webhook failed")
+
+    spawn(_run())
     return {"ok": True}
 
 

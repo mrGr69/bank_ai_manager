@@ -1,4 +1,5 @@
 from app.bot.handlers import allowed
+from app.bot.updates import remember_update
 from app.config import Settings, parse_telegram_user_id
 
 
@@ -21,3 +22,10 @@ def test_allowed_compares_as_int(monkeypatch):
     assert allowed(111) is True
     assert allowed("111") is True
     assert allowed(222) is False
+
+
+def test_remember_update_drops_duplicates():
+    uid = 378882588
+    assert remember_update(uid) is True
+    assert remember_update(uid) is False
+    assert remember_update(uid + 1) is True

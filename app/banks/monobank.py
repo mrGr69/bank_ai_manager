@@ -110,7 +110,19 @@ async def fetch_statement(account_id: str, days: int = 31) -> list[dict]:
     return items
 
 
+_sync_lock = asyncio.Lock()
+
+
+def sync_busy() -> bool:
+    return _sync_lock.locked()
+
+
 async def sync_statements(session: AsyncSession, days: int = 31) -> dict:
+    async with _sync_lock:
+        return await _sync_statements_inner(session, days)
+
+
+async def _sync_statements_inner(session: AsyncSession, days: int = 31) -> dict:
     from sqlalchemy import select
 
     await sync_accounts(session)
