@@ -53,3 +53,11 @@ DEFAULT_SETTINGS = {
     "weekly_report_hour": "20",
     "weekly_report_dow": "sun",
 }
+
+
+def all_category_options() -> list[dict]:
+    return [
+        {"label": label[:40], "cat": code}
+        for code, label in CATEGORIES.items()
+        if code != "UNCATEGORIZED_SUSPICIOUS"
+    ]

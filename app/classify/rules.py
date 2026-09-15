@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+
+from app.taxonomy import CATEGORIES, ESSENTIAL, all_category_options
 
 
 @dataclass
@@ -201,15 +203,11 @@ def classify_rules(
     elif mcc in MCC_MAP:
         category = MCC_MAP[mcc]
         confidence = 0.8
-        from app.taxonomy import ESSENTIAL
-
         is_essential = category in ESSENTIAL
         exclude = is_internal
     elif bank_category:
         category = _bank_cat(bank_category)
         confidence = 0.7
-        from app.taxonomy import ESSENTIAL
-
         is_essential = category in ESSENTIAL
         exclude = is_internal
     else:
@@ -322,16 +320,11 @@ def _comment(category: str, desc: str, amt: Decimal, abs_amt: Decimal) -> str:
     if category == "DEBT_INTEREST":
         return "Це вже не грейс, а відсотки. Кредитка з'їдає зарплату."
     if category == "UNCATEGORIZED_SUSPICIOUS":
-        return f"Не зрозумів «{desc[:28]}». Без мітки це діра в статистиці."
+        return f"Не зрозумів «{desc[:28]}». Натисни категорію нижче."
     if amt < 0:
-        return f"{abs_amt:.0f} ₴ · {category}."
+        return f"{abs_amt:.0f} ₴ · {CATEGORIES.get(category, category)}."
     return f"+{abs_amt:.0f} ₴"
 
 
 def _generic_options() -> list[dict]:
-    return [
-        {"label": "🛒 Продукти / побут", "cat": "GROCERIES_HOME"},
-        {"label": "🍕 Кафе / бар", "cat": "DINING_LEISURE"},
-        {"label": "🚕 Таксі / дорога", "cat": "TRANSIT_TAXI"},
-        {"label": "🤷 Разове, не побут", "cat": "ONE_OFF"},
-    ]
+    return all_category_options()

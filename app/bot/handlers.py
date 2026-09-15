@@ -29,9 +29,9 @@ from app.models import Setting, Transaction
 from app.banks.monobank import MonoError, sync_busy, sync_running_seconds, sync_statements
 from app.services.files import import_path
 from app.services.alerts import mark_sent, should_alert_limit, already_sent
-from app.services.ledger import category_label, debt_snapshot, fmt_money, month_summary
-from app.services.reports import debt_chart_png, weekly_text
-from app.taxonomy import CATEGORIES
+from app.services.ledger import category_label, debt_snapshot, fmt_money
+from app.services.reports import debt_chart_png, month_text, weekly_text
+from app.taxonomy import CATEGORIES, all_category_options
 
 log = logging.getLogger("uvicorn.error")
 router = Router()
@@ -123,14 +123,23 @@ async def on_telegram_error(event: ErrorEvent):
 
 
 def kb_clarify(tx: Transaction) -> InlineKeyboardMarkup | None:
-    opts = tx.clarification_options or []
+    if tx.category == "UNCATEGORIZED_SUSPICIOUS":
+        opts = all_category_options()
+    else:
+        opts = tx.clarification_options or []
     if not opts:
         return None
-    rows = []
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
     for opt in opts:
         cat = opt.get("cat") or ""
-        label = opt.get("label") or cat
-        rows.append([InlineKeyboardButton(text=label[:40], callback_data=f"fix:{tx.id}:{cat}")])
+        label = opt.get("label") or category_label(cat)
+        row.append(InlineKeyboardButton(text=label[:40], callback_data=f"fix:{tx.id}:{cat}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -148,7 +157,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "Sentinel на зв'язку. Дивлюсь зовнішні витрати, борги і діри в категоріях.\n\n"
-        "Кнопки внизу — місяць, борги, тиждень, синк Моно, ліміти.\n"
+        "Кнопки внизу: «Місяць» — з 1 числа; «Тиждень» — з понеділка.\n"
         "Орієнтир — плановий дохід. Готівка — ручне надходження.\n"
         "Excel виписки Привату кидай файлом у чат.",
         reply_markup=main_kb(),
@@ -163,18 +172,8 @@ async def cmd_help(message: Message, state: FSMContext):
 @router.message(Command("status"))
 async def cmd_status(message: Message):
     async with SessionLocal() as session:
-        s = await month_summary(session)
-    lines = [
-        f"Орієнтир: {fmt_money(s['salary_target'])}",
-        f"Надходження: {fmt_money(s['income'])}",
-        f"Витрати: {fmt_money(s['spent'])}",
-        f"Відносно орієнтиру: {fmt_money(s['free'])}",
-        "",
-        f"Кафе: {fmt_money(s['leaks']['DINING_LEISURE'])}",
-        f"Таксі: {fmt_money(s['leaks']['TRANSIT_TAXI'])}",
-        f"Дейтинг: {fmt_money(s['leaks']['DATING_ROMANCE'])}",
-    ]
-    await message.answer("\n".join(lines), reply_markup=main_kb())
+        text = await month_text(session)
+    await message.answer(text[:4000], reply_markup=main_kb())
 
 
 @router.message(Command("debt"))
@@ -203,17 +202,7 @@ async def cmd_debt(message: Message):
 async def cmd_week(message: Message):
     async with SessionLocal() as session:
         text = await weekly_text(session)
-        png = await debt_chart_png(session)
-    if png:
-        await message.answer_photo(
-            BufferedInputFile(png, filename="debt.png"),
-            caption=text[:1024],
-            reply_markup=main_kb(),
-        )
-        if len(text) > 1024:
-            await message.answer(text[1024:4000], reply_markup=main_kb())
-    else:
-        await message.answer(text[:4000], reply_markup=main_kb())
+    await message.answer(text[:4000], reply_markup=main_kb())
 
 
 async def save_salary(message: Message, raw: str) -> None:

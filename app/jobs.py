@@ -32,14 +32,13 @@ async def job_weekly():
         text = await weekly_text(session)
         png = await debt_chart_png(session)
         bot = get_bot()
+        await bot.send_message(settings.telegram_user_id, text[:4000])
         if png:
             await bot.send_photo(
                 settings.telegram_user_id,
                 BufferedInputFile(png, filename="debt.png"),
-                caption=text[:1024],
+                caption="Борги зараз (не за тиждень). Деталі — кнопка «Борги».",
             )
-        else:
-            await bot.send_message(settings.telegram_user_id, text[:4000])
         await mark_sent(session, fp, "weekly", None, {})
 
 

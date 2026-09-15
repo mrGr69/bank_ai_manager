@@ -82,3 +82,15 @@ def test_tuition_excluded():
     r = _c("ЧНУ ім. Б. Хмельницького. Oplata za navchannia", -19101)
     assert r.category == "ONE_OFF"
     assert r.exclude_from_budget is True
+
+
+def test_uncategorized_offers_all_categories():
+    from app.taxonomy import CATEGORIES, all_category_options
+
+    r = _c("XQZ unknown merchant 9988", -320)
+    assert r.category == "UNCATEGORIZED_SUSPICIOUS"
+    assert r.clarification_needed is True
+    cats = {opt["cat"] for opt in r.clarification_options}
+    expected = {code for code in CATEGORIES if code != "UNCATEGORIZED_SUSPICIOUS"}
+    assert cats == expected
+    assert len(all_category_options()) == len(expected)

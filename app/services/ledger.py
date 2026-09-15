@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,37 @@ from app.taxonomy import CATEGORIES, LEAK_CATEGORIES
 
 KYIV = ZoneInfo(settings.tz)
 
+MONTHS_NOM = (
+    "",
+    "січень",
+    "лютий",
+    "березень",
+    "квітень",
+    "травень",
+    "червень",
+    "липень",
+    "серпень",
+    "вересень",
+    "жовтень",
+    "листопад",
+    "грудень",
+)
+MONTHS_GEN = (
+    "",
+    "січня",
+    "лютого",
+    "березня",
+    "квітня",
+    "травня",
+    "червня",
+    "липня",
+    "серпня",
+    "вересня",
+    "жовтня",
+    "листопада",
+    "грудня",
+)
+
 
 def month_bounds(when: datetime | None = None) -> tuple[datetime, datetime]:
     now = (when or datetime.now(KYIV)).astimezone(KYIV)
@@ -22,6 +53,26 @@ def month_bounds(when: datetime | None = None) -> tuple[datetime, datetime]:
     else:
         end = start.replace(month=start.month + 1)
     return start, end
+
+
+def week_bounds(when: datetime | None = None) -> tuple[datetime, datetime]:
+    now = (when or datetime.now(KYIV)).astimezone(KYIV)
+    start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = now + timedelta(seconds=1)
+    return start, end
+
+
+def fmt_day_month(dt: datetime) -> str:
+    local = dt.astimezone(KYIV)
+    return f"{local.day} {MONTHS_GEN[local.month]}"
+
+
+def fmt_range(start: datetime, end: datetime) -> str:
+    last = (end - timedelta(seconds=1)).astimezone(KYIV)
+    first = start.astimezone(KYIV)
+    if first.month == last.month and first.year == last.year:
+        return f"{first.day}–{last.day} {MONTHS_GEN[first.month]}"
+    return f"{fmt_day_month(first)} — {fmt_day_month(last)}"
 
 
 async def setting_decimal(session: AsyncSession, key: str, default: str) -> Decimal:
@@ -36,8 +87,9 @@ async def visible_filter():
     )
 
 
-async def month_summary(session: AsyncSession, when: datetime | None = None) -> dict:
-    start, end = month_bounds(when)
+async def period_summary(
+    session: AsyncSession, start: datetime, end: datetime
+) -> dict:
     vis = await visible_filter()
     rows = (
         await session.execute(
@@ -49,7 +101,7 @@ async def month_summary(session: AsyncSession, when: datetime | None = None) -> 
     by_cat = {cat: {"sum": Decimal(total or 0), "n": n} for cat, total, n in rows}
     income = Decimal("0")
     spent = Decimal("0")
-    for cat, data in by_cat.items():
+    for data in by_cat.values():
         if data["sum"] > 0:
             income += data["sum"]
         else:
@@ -66,8 +118,13 @@ async def month_summary(session: AsyncSession, when: datetime | None = None) -> 
         "by_cat": by_cat,
         "salary_target": salary_target,
         "leaks": leaks,
-        "free": salary_target + spent,  # spent is negative
+        "free": salary_target + spent,
     }
+
+
+async def month_summary(session: AsyncSession, when: datetime | None = None) -> dict:
+    start, end = month_bounds(when)
+    return await period_summary(session, start, end)
 
 
 async def category_month_spent(session: AsyncSession, category: str, when: datetime | None = None) -> Decimal:
