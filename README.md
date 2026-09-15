@@ -10,7 +10,9 @@
 
 ## Railway
 1. Репозиторій на GitHub (виписки `.xls/.xlsx` у `.gitignore` — не комітити).
-2. New project на https://railway.com → Postgres plugin → сервіс з цього Dockerfile.
+2. New project на https://railway.com → **окремий сервіс Postgres** у тому ж проєкті → Deploy з цього Dockerfile.
+   У змінних застосунку має бути `DATABASE_URL` від Postgres (Variable reference), не localhost.
+   Внутрішня адреса `*.railway.internal` — ок; публічний `*.rlwy.net` теж ок.
 3. Variables:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_USER_ID`
