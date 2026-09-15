@@ -33,3 +33,18 @@ def test_compute_mono_debt():
     assert compute_mono_debt(Decimal("80000"), Decimal("100000")) == Decimal("20000.00")
     assert compute_mono_debt(Decimal("120000"), Decimal("100000")) == Decimal("0.00")
     assert compute_mono_debt(Decimal("5000"), Decimal("0")) == Decimal("0.00")
+
+
+def test_should_fetch_statement_skips_jars():
+    from types import SimpleNamespace
+
+    from app.banks.monobank import should_fetch_statement
+
+    jar = SimpleNamespace(external_id="x", code="eaid_jar1", credit_limit_uah=Decimal("0"))
+    black = SimpleNamespace(external_id="x", code="black", credit_limit_uah=Decimal("0"))
+    credit = SimpleNamespace(external_id="x", code="platinum_ab", credit_limit_uah=Decimal("10000"))
+    empty = SimpleNamespace(external_id="", code="black", credit_limit_uah=Decimal("10000"))
+    assert should_fetch_statement(jar) is False
+    assert should_fetch_statement(black) is True
+    assert should_fetch_statement(credit) is True
+    assert should_fetch_statement(empty) is False

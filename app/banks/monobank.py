@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Awaitable, Callable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,22 +15,58 @@ from app.models import Account
 from app.services.ingest import ingest_items, get_account
 
 BASE = "https://api.monobank.ua"
+MONO_GAP_SEC = 62.0
+SYNC_TIMEOUT_SEC = 8 * 60
+log = logging.getLogger("uvicorn.error")
+
+Progress = Callable[[str], Awaitable[None]]
 
 
 class MonoError(RuntimeError):
     pass
 
 
+_last_mono_at = 0.0
+_sync_lock = asyncio.Lock()
+_sync_started_at: float | None = None
+
+
+def sync_busy() -> bool:
+    return _sync_lock.locked()
+
+
+def sync_running_seconds() -> int:
+    if _sync_started_at is None:
+        return 0
+    return max(0, int(time.monotonic() - _sync_started_at))
+
+
+async def _throttle() -> None:
+    global _last_mono_at
+    wait = MONO_GAP_SEC - (time.monotonic() - _last_mono_at)
+    if wait > 0:
+        log.info("monobank throttle %.0fs", wait)
+        await asyncio.sleep(wait)
+
+
 async def _get(path: str) -> dict | list:
+    global _last_mono_at
     if not settings.monobank_token:
         raise MonoError("MONOBANK_TOKEN порожній")
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(f"{BASE}{path}", headers={"X-Token": settings.monobank_token})
-        if r.status_code == 429:
-            raise MonoError("Monobank rate limit, зачекай хвилину")
-        if r.status_code >= 400:
-            raise MonoError(f"Monobank {r.status_code}: {r.text[:200]}")
-        return r.json()
+    last_error = None
+    for attempt in range(2):
+        await _throttle()
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(f"{BASE}{path}", headers={"X-Token": settings.monobank_token})
+            _last_mono_at = time.monotonic()
+            if r.status_code == 429:
+                last_error = MonoError("Monobank rate limit, зачекай хвилину")
+                log.warning("monobank 429 on %s, retry", path)
+                continue
+            if r.status_code >= 400:
+                raise MonoError(f"Monobank {r.status_code}: {r.text[:200]}")
+            return r.json()
+    raise last_error or MonoError("Monobank rate limit, зачекай хвилину")
 
 
 async def client_info() -> dict:
@@ -152,36 +191,66 @@ async def fetch_statement(account_id: str, days: int = 31) -> list[dict]:
     return items
 
 
-_sync_lock = asyncio.Lock()
+def should_fetch_statement(acc: Account) -> bool:
+    if not acc.external_id:
+        return False
+    if acc.code in {"black", "white"}:
+        return True
+    return (acc.credit_limit_uah or Decimal("0")) > 0
 
 
-def sync_busy() -> bool:
-    return _sync_lock.locked()
-
-
-async def sync_statements(session: AsyncSession, days: int = 31) -> dict:
+async def sync_statements(
+    session: AsyncSession | None = None,
+    days: int = 31,
+    progress: Progress | None = None,
+    use_llm: bool = False,
+) -> dict:
+    if _sync_lock.locked():
+        raise MonoError(f"Уже йде синк ({sync_running_seconds()} с). Зачекай.")
+    global _sync_started_at
     async with _sync_lock:
-        return await _sync_statements_inner(session, days)
+        _sync_started_at = time.monotonic()
+        try:
+            return await asyncio.wait_for(
+                _sync_statements_inner(days=days, progress=progress, use_llm=use_llm),
+                timeout=SYNC_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError as exc:
+            raise MonoError("Синк зупинено: зависання довше 8 хв. Натисни /sync ще раз.") from exc
+        finally:
+            _sync_started_at = None
 
 
-async def _sync_statements_inner(session: AsyncSession, days: int = 31) -> dict:
+async def _sync_statements_inner(
+    *, days: int, progress: Progress | None, use_llm: bool
+) -> dict:
     from sqlalchemy import select
+    from app.db import SessionLocal
 
-    await sync_accounts(session)
-    await asyncio.sleep(61)
-    accounts = (await session.execute(select(Account).where(Account.bank == "mono"))).scalars().all()
+    async with SessionLocal() as session:
+        updated = await sync_accounts(session)
+        credits = [
+            a for a in updated if (a.credit_limit_uah or Decimal("0")) > 0 or (a.last_debt_uah or 0) > 0
+        ]
+        if progress:
+            if credits:
+                bits = [f"{a.title}: {a.last_debt_uah} / {a.credit_limit_uah} ₴" for a in credits]
+                await progress("Ліміти оновлено.\n" + "\n".join(bits))
+            else:
+                await progress("Ліміти оновлено. Кредитних карток з лімітом не видно.")
+        rows = (await session.execute(select(Account).where(Account.bank == "mono"))).scalars().all()
+        targets = [(acc.code, acc.external_id, acc.title) for acc in rows if should_fetch_statement(acc)]
+
     total = {"inserted": 0, "skipped": 0, "alerts": []}
-    waited = False
-    for acc in accounts:
-        if not acc.external_id:
-            continue
-        if waited:
-            await asyncio.sleep(61)
-        waited = True
-        items = await fetch_statement(acc.external_id, days=days)
-        result = await ingest_items(
-            session, bank="mono", account_code=acc.code, source="mono_api", items=items, use_llm=True
-        )
+    for i, (code, external_id, title) in enumerate(targets, 1):
+        if progress:
+            await progress(f"Виписка {i}/{len(targets)}: {title}…")
+        log.info("monobank statement %s/%s %s", i, len(targets), code)
+        items = await fetch_statement(external_id, days=days)
+        async with SessionLocal() as session:
+            result = await ingest_items(
+                session, bank="mono", account_code=code, source="mono_api", items=items, use_llm=use_llm
+            )
         total["inserted"] += result["inserted"]
         total["skipped"] += result["skipped"]
         total["alerts"].extend(result["alerts"])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,7 @@ from app.services.alerts import already_sent, mark_sent
 from app.services.reports import debt_chart_png, weekly_text
 from aiogram.types import BufferedInputFile
 
+log = logging.getLogger("uvicorn.error")
 KYIV = ZoneInfo(settings.tz)
 scheduler = AsyncIOScheduler(timezone=KYIV)
 
@@ -44,10 +46,13 @@ async def job_weekly():
 async def job_sync():
     if not settings.monobank_token or sync_busy():
         return
-    async with SessionLocal() as session:
-        result = await sync_statements(session, days=2)
+    try:
+        result = await sync_statements(days=2, use_llm=False)
         if result["alerts"] and settings.telegram_bot_token:
-            await notify_new(get_bot(), result["alerts"], session)
+            async with SessionLocal() as session:
+                await notify_new(get_bot(), result["alerts"], session)
+    except Exception:
+        log.exception("scheduled monobank sync failed")
 
 
 def setup_jobs() -> None:

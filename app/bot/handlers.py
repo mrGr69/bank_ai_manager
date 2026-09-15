@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.config import parse_telegram_user_id, settings
 from app.db import SessionLocal
 from app.models import Setting, Transaction
-from app.banks.monobank import MonoError, sync_busy, sync_statements
+from app.banks.monobank import MonoError, sync_busy, sync_running_seconds, sync_statements
 from app.services.files import import_path
 from app.services.alerts import mark_sent, should_alert_limit, already_sent
 from app.services.ledger import category_label, debt_snapshot, fmt_money, month_summary
@@ -248,18 +248,32 @@ async def cmd_limit(message: Message, command: CommandObject):
 @router.message(Command("sync"))
 async def cmd_sync(message: Message):
     if sync_busy():
-        await message.answer("Уже тягну Monobank. Напишу, коли закінчу.")
+        sec = sync_running_seconds()
+        await message.answer(
+            f"Уже тягну Monobank ({sec // 60} хв {sec % 60} с). "
+            "Не тисни /sync ще раз — напишу, коли закінчу або впаде."
+        )
         return
-    await message.answer("Тягну Monobank. Через ліміт банку це може зайняти ~2 хв…")
+    await message.answer("Оновлюю ліміти карток. Виписки чорної/білої — з паузою Моно ~1 хв між запитами.")
+
+    async def progress(text: str):
+        try:
+            await message.answer(text)
+        except Exception:
+            log.exception("sync progress failed")
+
     try:
+        result = await sync_statements(days=31, progress=progress, use_llm=False)
         async with SessionLocal() as session:
-            result = await sync_statements(session, days=31)
             await notify_new(message.bot, result["alerts"], session)
         await message.answer(
             f"Готово: нових {result['inserted']}, уже були {result['skipped']}."
         )
     except MonoError as exc:
         await message.answer(str(exc))
+    except Exception as exc:
+        log.exception("sync failed")
+        await message.answer(f"Синк упав: {exc}")
 
 
 @router.message(F.document)
