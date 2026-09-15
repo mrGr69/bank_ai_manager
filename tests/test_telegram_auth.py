@@ -29,3 +29,13 @@ def test_remember_update_drops_duplicates():
     assert remember_update(uid) is True
     assert remember_update(uid) is False
     assert remember_update(uid + 1) is True
+
+
+def test_limit_callback_data_fits_telegram():
+    from app.bot.handlers import kb_limit_cats
+
+    kb = kb_limit_cats()
+    assert kb.inline_keyboard
+    for row in kb.inline_keyboard:
+        for btn in row:
+            assert btn.callback_data and len(btn.callback_data.encode()) <= 64

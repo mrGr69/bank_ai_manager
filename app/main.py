@@ -13,7 +13,7 @@ from app.db import SessionLocal, init_db
 from app.jobs import setup_jobs
 from app.seed import seed
 from app.banks.monobank import set_webhook, sync_accounts
-from aiogram.types import Update
+from aiogram.types import BotCommand, Update
 
 log = logging.getLogger("uvicorn.error")
 
@@ -32,6 +32,15 @@ async def lifespan(app: FastAPI):
                 webhook_url,
                 allowed_updates=["message", "callback_query"],
                 drop_pending_updates=False,
+            )
+            await bot.set_my_commands(
+                [
+                    BotCommand(command="start", description="Показати кнопки"),
+                    BotCommand(command="status", description="Місяць"),
+                    BotCommand(command="debt", description="Борги"),
+                    BotCommand(command="week", description="Тиждень"),
+                    BotCommand(command="sync", description="Синк Monobank"),
+                ]
             )
             log.info(
                 "telegram webhook=%s owner_id=%s",
