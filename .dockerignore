@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+*.xls
+*.xlsx
+*.csv
+.env
+.env.*
+tests
+_parse_tmp
+README.md
+docker-compose.yml

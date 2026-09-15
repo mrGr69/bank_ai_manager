@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*SYSTEM INSTRUCTION*
+.ruff_cache/
+*.xls
+*.xlsx
+*.csv
+!tests/fixtures/**
+_parse_tmp/
+.idea/
+.vscode/
+dist/
+build/
+*.log
