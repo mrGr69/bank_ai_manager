@@ -1,5 +1,19 @@
+from pydantic import field_validator
 from sqlalchemy.engine.url import make_url
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_telegram_user_id(value) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().strip('"').strip("'")
+    if not text:
+        return None
+    return int(text)
 
 
 class Settings(BaseSettings):
@@ -7,6 +21,18 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = ""
     telegram_user_id: int | None = None
+
+    @field_validator("telegram_bot_token", mode="before")
+    @classmethod
+    def strip_token(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip().strip('"').strip("'")
+
+    @field_validator("telegram_user_id", mode="before")
+    @classmethod
+    def coerce_user_id(cls, value):
+        return parse_telegram_user_id(value)
 
     monobank_token: str = ""
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -13,6 +14,8 @@ from app.seed import seed
 from app.banks.monobank import set_webhook, sync_accounts
 from aiogram.types import Update
 
+log = logging.getLogger("uvicorn.error")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,9 +26,16 @@ async def lifespan(app: FastAPI):
     if settings.telegram_bot_token:
         bot = get_bot()
         if settings.public_url:
+            webhook_url = settings.public_url.rstrip("/") + "/telegram/webhook"
             await bot.set_webhook(
-                settings.public_url.rstrip("/") + "/telegram/webhook",
-                secret_token=None,
+                webhook_url,
+                allowed_updates=["message", "callback_query"],
+                drop_pending_updates=False,
+            )
+            log.info(
+                "telegram webhook=%s owner_id=%s",
+                webhook_url,
+                settings.telegram_user_id,
             )
             if settings.monobank_token:
                 try:
@@ -41,11 +51,6 @@ async def lifespan(app: FastAPI):
     yield
     if polling_task:
         polling_task.cancel()
-    if settings.telegram_bot_token and settings.public_url:
-        try:
-            await get_bot().delete_webhook()
-        except Exception:
-            pass
 
 
 app = FastAPI(title="Sentinel", lifespan=lifespan)
@@ -61,8 +66,22 @@ async def telegram_webhook(request: Request):
     if not settings.telegram_bot_token:
         return Response(status_code=503)
     payload = await request.json()
-    update = Update.model_validate(payload, context={"bot": get_bot()})
-    await dp.feed_update(get_bot(), update)
+    msg = payload.get("message") or payload.get("edited_message") or {}
+    from_user = msg.get("from") or payload.get("callback_query", {}).get("from") or {}
+    log.info(
+        "telegram update_id=%s keys=%s from_id=%s chat_id=%s text=%r",
+        payload.get("update_id"),
+        list(payload.keys()),
+        from_user.get("id"),
+        (msg.get("chat") or {}).get("id"),
+        (msg.get("text") or "")[:80],
+    )
+    try:
+        bot = get_bot()
+        update = Update.model_validate(payload, context={"bot": bot})
+        await dp.feed_update(bot, update)
+    except Exception:
+        log.exception("telegram webhook failed")
     return {"ok": True}
 
 
