@@ -90,15 +90,17 @@ async def debt_snapshot(session: AsyncSession) -> list[dict]:
     accounts = (await session.execute(select(Account).order_by(Account.bank, Account.code))).scalars().all()
     out = []
     for acc in accounts:
-        if acc.last_debt_uah is None and acc.credit_limit_uah is None:
+        limit = acc.credit_limit_uah or Decimal("0")
+        debt = acc.last_debt_uah or Decimal("0")
+        if limit <= 0 and debt <= 0:
             continue
         out.append(
             {
                 "title": acc.title,
                 "bank": acc.bank,
                 "code": acc.code,
-                "limit": acc.credit_limit_uah,
-                "debt": acc.last_debt_uah or Decimal("0"),
+                "limit": acc.credit_limit_uah or Decimal("0"),
+                "debt": debt,
                 "balance": acc.last_balance_uah,
                 "synced": acc.last_synced_at,
             }

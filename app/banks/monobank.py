@@ -49,36 +49,78 @@ def _kopiyka(value) -> Decimal:
     return (Decimal(value or 0) / Decimal(100)).quantize(Decimal("0.01"))
 
 
+def compute_mono_debt(balance: Decimal, credit_limit: Decimal | None) -> Decimal:
+    """Monobank balance includes credit. Own = balance - limit; debt = -own if negative."""
+    limit = credit_limit or Decimal("0")
+    own = balance - limit
+    if own < 0:
+        return (-own).quantize(Decimal("0.01"))
+    return Decimal("0.00")
+
+
+def assign_mono_codes(accounts: list[dict]) -> list[tuple[dict, str]]:
+    """One DB row per UAH account. Seeded black/white bind to the real cards, not the last extra jar."""
+    uah = [a for a in accounts if a.get("currencyCode") in (980, "980")]
+
+    def sort_key(raw: dict):
+        t = str(raw.get("type") or "").lower()
+        limit = int(raw.get("creditLimit") or 0)
+        if t == "black":
+            return (0, -limit)
+        if "white" in t:
+            return (1, 0)
+        return (2, -limit)
+
+    used: set[str] = set()
+    out: list[tuple[dict, str]] = []
+    for raw in sorted(uah, key=sort_key):
+        t = str(raw.get("type") or "acc").lower() or "acc"
+        t = "".join(ch if ch.isalnum() else "_" for ch in t)[:20]
+        if t == "black" and "black" not in used:
+            code = "black"
+        elif "white" in t and "white" not in used:
+            code = "white"
+        else:
+            suffix = str(raw.get("id") or "x")[-6:]
+            code = f"{t}_{suffix}"[:32]
+            n = 2
+            while code in used:
+                code = f"{t}_{suffix}{n}"[:32]
+                n += 1
+        used.add(code)
+        out.append((raw, code))
+    return out
+
+
 def guess_code(acc: dict) -> str:
-    if acc.get("type") == "white" or "white" in str(acc.get("type", "")).lower():
-        return "white"
-    return "black"
+    assigned = assign_mono_codes([acc])
+    return assigned[0][1] if assigned else "black"
+
+
+def mono_title(raw: dict, code: str) -> str:
+    if code == "black":
+        return "Monobank чорна (кредит)"
+    if code == "white":
+        return "Monobank біла"
+    pans = raw.get("maskedPan") or []
+    tail = str(pans[0])[-4:] if pans else ""
+    kind = raw.get("type") or code
+    return " ".join(part for part in (f"Monobank {kind}", tail) if part)
 
 
 async def sync_accounts(session: AsyncSession) -> list[Account]:
     info = await client_info()
     now = datetime.now(timezone.utc)
     updated = []
-    for raw in info.get("accounts") or []:
-        if raw.get("currencyCode") not in (980, "980"):
-            continue
-        code = guess_code(raw)
+    for raw, code in assign_mono_codes(info.get("accounts") or []):
         acc = await get_account(session, "mono", code)
         acc.external_id = raw.get("id") or acc.external_id
         acc.credit_limit_uah = _kopiyka(raw.get("creditLimit"))
         balance = _kopiyka(raw.get("balance"))
         acc.last_balance_uah = balance
-        # Monobank: debt ≈ creditLimit - own funds. If balance < creditLimit, used credit = creditLimit - balance
-        # when using credit, balance is own+credit remaining. Debt = creditLimit - max(balance, 0) if balance is available including credit.
-        # Docs: balance includes credit. Available own = balance - creditLimit (can be negative).
-        # Debt = creditLimit - (balance) if we think of leftover credit... 
-        # Actually: total = balance (available to spend). creditLimit = credit. Own = balance - creditLimit.
-        # If own < 0, debt = -own.
-        own = balance - (acc.credit_limit_uah or 0)
-        acc.last_debt_uah = -own if own < 0 else Decimal("0")
+        acc.last_debt_uah = compute_mono_debt(balance, acc.credit_limit_uah)
         acc.last_synced_at = now
-        if not acc.title:
-            acc.title = f"Monobank {code}"
+        acc.title = mono_title(raw, code)
         updated.append(acc)
     await session.commit()
     return updated
